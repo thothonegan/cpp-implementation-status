@@ -40,13 +40,13 @@
 			
 				if line.start_with? '|{{tt|'
 					r = /{{tt\|(?'name'[a-z\_]+)}}/
-					cur[:attributeToken] = r.match(line)[:name]
+					cur[:attributeToken] = r.match(line)[:name].strip
 					
 					# TODO: Combine these with the original
 				elsif line.start_with? '| rowspan="2" | {{tt|'
 					rowSpan=2
 					r = /{{tt\|(?'name'[a-z\_]+)}}/
-					cur[:attributeToken] = r.match(line)[:name]
+					cur[:attributeToken] = r.match(line)[:name].strip
 
 				elsif line.start_with? '| rowspan="2" | {{attr|'
 					rowSpan=2
@@ -125,10 +125,10 @@
 					# ignore
 				elsif rowSpan > 1 && postRowSpanMatchRes != nil
 					cppLanguageFeatures << {
-						:name => cur[:name],
+						:name => cur[:name].strip,
 						:description => postRowSpanMatchRes[:description],
-						:value => postRowSpanMatchRes[:value],
-						:lang => postRowSpanMatchRes[:lang]
+						:value => postRowSpanMatchRes[:value].strip,
+						:lang => postRowSpanMatchRes[:lang].strip
 					}
 					
 					rowSpan -= 1 # took it into account
@@ -138,20 +138,20 @@
 					end
 				elsif simpleMatchRes != nil
 					cppLanguageFeatures << {
-						:name => simpleMatchRes[:name],
+						:name => simpleMatchRes[:name].strip,
 						:description => simpleMatchRes[:description],
-						:value => simpleMatchRes[:value],
-						:lang => simpleMatchRes[:lang]
+						:value => simpleMatchRes[:value].strip,
+						:lang => simpleMatchRes[:lang].strip
 					}
 				elsif rowSpanMatchRes != nil
 					rowSpan = rowSpanMatchRes[:rowspan].to_i
 					cur[:name] = rowSpanMatchRes[:name] # for later usage
 					
 					cppLanguageFeatures << {
-						:name => rowSpanMatchRes[:name],
+						:name => rowSpanMatchRes[:name].strip,
 						:description => rowSpanMatchRes[:description],
-						:value => rowSpanMatchRes[:value],
-						:lang => rowSpanMatchRes[:lang]
+						:value => rowSpanMatchRes[:value].strip,
+						:lang => rowSpanMatchRes[:lang].strip
 					}
 				elsif line == "|}"
 					inTable = false
@@ -184,11 +184,11 @@
 					lang = langRegex.match(splits[3].strip)[:lang]
 						
 					cppLibraryFeatures << {
-						:name => name,
+						:name => name.strip,
 						:description => splits[0],
-						:value => value,
+						:value => value.strip,
 						:header => splits[2],
-						:lang => lang
+						:lang => lang.strip
 					}
 					
 					rowSpan -= 1
@@ -209,11 +209,11 @@
 						cur[:name] = name
 						
 						cppLibraryFeatures << {
-							:name => name,
+							:name => name.strip,
 							:description => splits[1],
-							:value => value,
+							:value => value.strip,
 							:header => splits[3],
-							:lang => lang
+							:lang => lang.strip
 						}
 					else
 						name = nameRegex.match(splits[0].strip.gsub('}}{{c|',''))[:name]
@@ -221,11 +221,11 @@
 						lang = langRegex.match(splits[4].strip)[:lang]
 						
 						cppLibraryFeatures << {
-							:name => name,
+							:name => name.strip,
 							:description => splits[1],
-							:value => value,
+							:value => value.strip,
 							:header => splits[3],
-							:lang => lang
+							:lang => lang.strip
 						}
 					end
 				elsif splits[0] == "|}"
@@ -306,16 +306,16 @@ do { \
 
 #define TEST_LANGUAGEFEATURE(name, expectedValue) \
 do { \
-	if (std::string(STRINGIFY(name)) == #expectedValue) { \
+	if (intFromCPPDateString(STRINGIFY(name)) <= intFromCPPDateString(#expectedValue)) { \
 		available("* C++ Feature " #name); \
 	} else { \
-		notAvailable("* C++ Feature" #name); \
+		notAvailable("* C++ Feature " #name); \
 	} \
 } while (false)
 
 #define TEST_LIBFEATURE(name, expectedValue) \
 do { \
-	if (std::string(STRINGIFY(name)) == #expectedValue) { \
+	if (intFromCPPDateString(STRINGIFY(name)) <= intFromCPPDateString(#expectedValue)) { \
 		available("* C++ Library Feature " #name ); \
 	} else { \
 		notAvailable("* C++ Library Feature " #name); \
@@ -323,6 +323,26 @@ do { \
 } while (false)
 
 #define COL_WIDTH 70
+
+int intFromCPPDateString (const std::string& str)
+{
+	// cut off the ending L if there is one for newer year dates
+	try
+	{
+		std::string s = str;
+		if (s[s.size()-1] == 'L')
+			s = s.substr(0, s.size()-2);
+
+		return std::stoi(s);
+	}
+	catch (std::exception&)
+	{
+		// This happens if it fell through (aka wasnt evaluated)
+		//std::cerr << "!! could not parse date: " << str << std::endl;
+		return 99999999;
+	}
+
+}
 
 void available (const char* description)
 {

@@ -1,6 +1,6 @@
 
 
-// Generated from main.cpp.erb on 2020-12-05
+// Generated from main.cpp.erb on 2020-12-03
 
 #include <iostream>
 
@@ -64,16 +64,16 @@ do { \
 
 #define TEST_LANGUAGEFEATURE(name, expectedValue) \
 do { \
-	if (std::string(STRINGIFY(name)) == #expectedValue) { \
+	if (intFromCPPDateString(STRINGIFY(name)) <= intFromCPPDateString(#expectedValue)) { \
 		available("* C++ Feature " #name); \
 	} else { \
-		notAvailable("* C++ Feature" #name); \
+		notAvailable("* C++ Feature " #name); \
 	} \
 } while (false)
 
 #define TEST_LIBFEATURE(name, expectedValue) \
 do { \
-	if (std::string(STRINGIFY(name)) == #expectedValue) { \
+	if (intFromCPPDateString(STRINGIFY(name)) <= intFromCPPDateString(#expectedValue)) { \
 		available("* C++ Library Feature " #name ); \
 	} else { \
 		notAvailable("* C++ Library Feature " #name); \
@@ -81,6 +81,26 @@ do { \
 } while (false)
 
 #define COL_WIDTH 70
+
+int intFromCPPDateString (const std::string& str)
+{
+	// cut off the ending L if there is one for newer year dates
+	try
+	{
+		std::string s = str;
+		if (s[s.size()-1] == 'L')
+			s = s.substr(0, s.size()-2);
+
+		return std::stoi(s);
+	}
+	catch (std::exception&)
+	{
+		// This happens if it fell through (aka wasnt evaluated)
+		//std::cerr << "!! could not parse date: " << str << std::endl;
+		return 99999999;
+	}
+
+}
 
 void available (const char* description)
 {
