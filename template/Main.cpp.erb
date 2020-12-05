@@ -1,0 +1,373 @@
+<%
+	#require 'nokogiri'
+
+	require 'open-uri'
+
+	doc = URI.open("https://en.cppreference.com/mwiki/index.php?title=cpp/feature_test&action=raw").read
+	
+	cppAttributes = []
+	cppLanguageFeatures = []
+	cppLibraryFeatures = []
+	
+	mode = nil
+	inTable = false
+	cur = nil
+	rowSpan = 1
+	
+	doc.each_line do |line|
+		line.strip!
+		
+		# mode switching
+		if line.include? '===Attributes==='
+			mode = :attributes
+			
+		elsif line.include? '===Language features==='
+			mode = :languageFeatures
+			
+		elsif line.include? '===Library features==='
+			mode = :libraryFeatures
+		
+		elsif line.include? '===Example==='
+			mode = :example
+		
+		# mode handling
+		elsif mode == :attributes
+			if line.start_with? '{|'
+				inTable = true
+				cur = {}
+			
+			elsif inTable
+			
+				if line.start_with? '|{{tt|'
+					r = /{{tt\|(?'name'[a-z\_]+)}}/
+					cur[:attributeToken] = r.match(line)[:name]
+					
+					# TODO: Combine these with the original
+				elsif line.start_with? '| rowspan="2" | {{tt|'
+					rowSpan=2
+					r = /{{tt\|(?'name'[a-z\_]+)}}/
+					cur[:attributeToken] = r.match(line)[:name]
+
+				elsif line.start_with? '| rowspan="2" | {{attr|'
+					rowSpan=2
+					r = /{{attr\|(?'name'[a-z_]+)(\|(?'name2'[a-z_]+))?}}/
+					match = r.match(line)
+					if match[:name2] != nil # linking to different page
+						cur[:attribute] = '[[' + match[:name2] + ']]'
+					else
+						cur[:attribute] = '[[' + match[:name] + ']]'
+					end
+
+				elsif line.start_with? '|{{attr|'
+					r = /{{attr\|(?'name'[a-z_]+)(\|(?'name2'[a-z_]+))?}}/
+					match = r.match(line)
+					if match[:name2] != nil # linking to different page
+						cur[:attribute] = '[[' + match[:name2] + ']]'
+					else
+						cur[:attribute] = '[[' + match[:name] + ']]'
+					end
+				
+				elsif line.start_with? '|{{c|'
+					r = /{{c\|(?'name'[a-z0-9]+)L}}/
+					cur[:value] = r.match(line)[:name]
+				
+				elsif line.start_with? '|{{mark'
+					r = /{{mark (?'name'[a-z\+0-9]+)}}/
+					cur[:lang] = r.match(line)[:name]
+					
+				elsif (line == '|-' || line == '|}') && cur != nil
+					# next section or end of table
+					if cur == nil || cur != {}
+						if cur[:attribute] == nil
+							raise 'No attribute provided for CPP attribute'
+						end
+
+						cppAttributes << cur
+
+						if rowSpan == 1
+							cur = {}
+						else
+							 # reuse attributes
+							rowSpan -= 1
+						end
+					end
+					
+					if line == '|}'
+						inTable = false
+					end
+				else
+					# unknown line in table
+				end
+			end # inTable
+			
+		elsif mode == :languageFeatures
+			if line.start_with? '{|'
+				inTable = true
+				cur = {}
+			
+			elsif inTable
+				simpleMatch = /^\|\s+{{c\|(?'name'[a-z_0-9]+)}}\s+\|\|(?'description'.*)\s+\|\|\s+{{c\|(?'value'[0-9]+)L}}\s+\|\|\s+{{mark (?'lang'[a-z\+0-9]+)}}/
+				
+				rowSpanMatch = /^\|\s+rowspan="(?'rowspan'[0-9]+)"\s+\|\s+{{c\|(?'name'[a-z_0-9]+)}}\s+\|\|(?'description'.*)\s+\|\|\s+{{c\|(?'value'[0-9]+)L}}\s+\|\|\s+{{mark (?'lang'[a-z\+0-9]+)}}/
+				
+				postRowSpanMatch = /^\|(?'description'.*)\s+\|\|\s+{{c\|(?'value'[0-9]+)L}}\s+\|\|\s+{{mark (?'lang'[a-z\+0-9]+)}}/
+				
+				# special merge
+				if line.include? '{{c|__cpp_nontype_template_}}{{c|parameter_auto}}'
+					line.gsub! '{{c|__cpp_nontype_template_}}{{c|parameter_auto}}', '{{c|__cpp_nontype_template_parameter_auto}}'
+				end
+				
+				simpleMatchRes = simpleMatch.match(line)
+				rowSpanMatchRes = rowSpanMatch.match(line)
+				postRowSpanMatchRes = postRowSpanMatch.match(line)
+				
+				if line == "|-"
+					# ignore
+				elsif rowSpan > 1 && postRowSpanMatchRes != nil
+					cppLanguageFeatures << {
+						:name => cur[:name],
+						:description => postRowSpanMatchRes[:description],
+						:value => postRowSpanMatchRes[:value],
+						:lang => postRowSpanMatchRes[:lang]
+					}
+					
+					rowSpan -= 1 # took it into account
+				
+					if rowSpan == 1
+						cur = {} #  not needed anymore
+					end
+				elsif simpleMatchRes != nil
+					cppLanguageFeatures << {
+						:name => simpleMatchRes[:name],
+						:description => simpleMatchRes[:description],
+						:value => simpleMatchRes[:value],
+						:lang => simpleMatchRes[:lang]
+					}
+				elsif rowSpanMatchRes != nil
+					rowSpan = rowSpanMatchRes[:rowspan].to_i
+					cur[:name] = rowSpanMatchRes[:name] # for later usage
+					
+					cppLanguageFeatures << {
+						:name => rowSpanMatchRes[:name],
+						:description => rowSpanMatchRes[:description],
+						:value => rowSpanMatchRes[:value],
+						:lang => rowSpanMatchRes[:lang]
+					}
+				elsif line == "|}"
+					inTable = false
+				else
+					#puts "FAIL: " + line
+				end
+			end
+			
+		elsif mode == :libraryFeatures
+			if line.start_with? '{|'
+				inTable = true
+				cur = {}
+			
+			elsif inTable
+				splits = line.split '||'
+			
+				#puts "#{splits}"
+				
+				nameRegex = /\|\s+{{c\|(?'name'[a-z0-9_]+)}}/
+				valueRegex = /{{c\|(?'value'[0-9]+)L}}/
+				langRegex = /{{mark (?'lang'[a-z\+0-9]+)}}/
+				
+				
+				if splits[0] == "|-"
+					# ignore
+					
+				elsif rowSpan > 1
+					name = cur[:name]
+					value = valueRegex.match(splits[1].strip)[:value]
+					lang = langRegex.match(splits[3].strip)[:lang]
+						
+					cppLibraryFeatures << {
+						:name => name,
+						:description => splits[0],
+						:value => value,
+						:header => splits[2],
+						:lang => lang
+					}
+					
+					rowSpan -= 1
+					
+					if rowSpan == 1
+						cur = {} #  not needed anymore
+					end
+					
+				elsif splits.count == 5
+					
+					if splits[0].start_with? '| rowspan='
+						rowSpan = /\| rowspan=\"(?'rowspan'[0-9])+\"/.match(splits[0].strip)[:rowspan].to_i
+						
+						name = nameRegex.match(splits[0].strip.gsub('}}{{c|',''))[:name]
+						value = valueRegex.match(splits[2].strip)[:value]
+						lang = langRegex.match(splits[4].strip)[:lang]
+						
+						cur[:name] = name
+						
+						cppLibraryFeatures << {
+							:name => name,
+							:description => splits[1],
+							:value => value,
+							:header => splits[3],
+							:lang => lang
+						}
+					else
+						name = nameRegex.match(splits[0].strip.gsub('}}{{c|',''))[:name]
+						value = valueRegex.match(splits[2].strip)[:value]
+						lang = langRegex.match(splits[4].strip)[:lang]
+						
+						cppLibraryFeatures << {
+							:name => name,
+							:description => splits[1],
+							:value => value,
+							:header => splits[3],
+							:lang => lang
+						}
+					end
+				elsif splits[0] == "|}"
+					inTable = false
+				else
+					#puts "FAIL: " + line
+				end
+			end
+		end
+		
+		#puts line
+	end
+
+	cppStandards = (cppAttributes.map{|a| a[:lang]} + cppLanguageFeatures.map{|a| a[:lang]} + cppLibraryFeatures.map{|a| a[:lang]}).uniq.sort
+%>
+
+// Generated from main.cpp.erb on <%= Date.today %>
+
+#include <iostream>
+
+// compiler detection
+// must define:
+// COMPILER_NAME
+// COMPILER_VERSION
+// HAS_VERSION
+
+#if defined(__clang__)
+	#define COMPILER_NAME "Clang"
+	#define COMPILER_VERSION __clang_version__
+	#if __has_include(<version>)
+		#define HAS_VERSION 1
+	#else
+		#define HAS_VERSION 0
+	#endif
+#elif defined(__GNUC__)
+	#define COMPILER_NAME "GCC"
+	#define COMPILER_VERSION __VERSION__
+
+	#if __cplusplus >= 202002
+		#define HAS_VERSION 1
+	#else
+		#define HAS_VERSION 0
+	#endif
+#else
+	#define COMPILER_NAME "Unknown"
+	#define COMPILER_VERSION "Unknown"
+
+	#if __cplusplus >= 202002
+		#define HAS_VERSION 1
+	#else
+		#define HAS_VERSION 0
+	#endif
+#endif
+
+#if HAS_VERSION
+	#include <version>
+#else
+	#include <ciso646>
+#endif
+
+#include <cstring>
+
+#ifndef __has_cpp_attribute
+	#define __has_cpp_attribute(attributeToken) 0
+#endif
+
+#define TEST_ATTRIBUTE(name, expectedValue) \
+do { \
+	if (__has_cpp_attribute(name) == expectedValue) { \
+		available("* C++ Attribute " #name); \
+	} else { \
+		notAvailable("* C++ Attribute " #name); \
+	} \
+} while (false)
+
+#define STRINGIFY_INTERNAL(x) #x
+#define STRINGIFY(x) STRINGIFY_INTERNAL(x)
+
+#define TEST_LANGUAGEFEATURE(name, expectedValue) \
+do { \
+	if (std::string(STRINGIFY(name)) == #expectedValue) { \
+		available("* C++ Feature " #name); \
+	} else { \
+		notAvailable("* C++ Feature" #name); \
+	} \
+} while (false)
+
+#define TEST_LIBFEATURE(name, expectedValue) \
+do { \
+	if (std::string(STRINGIFY(name)) == #expectedValue) { \
+		available("* C++ Library Feature " #name ); \
+	} else { \
+		notAvailable("* C++ Library Feature " #name); \
+	} \
+} while (false)
+
+#define COL_WIDTH 70
+
+void available (const char* description)
+{
+	std::cout << description << ":";
+	
+	for (int i = strlen(description)+1; i < COL_WIDTH; ++i)
+		std::cout << " ";
+
+	std::cout << "available" << std::endl;
+}
+
+void notAvailable (const char* description)
+{
+	std::cout << description << ":";
+	
+	for (int i = strlen(description)+1; i < COL_WIDTH; ++i)
+		std::cout << " ";
+
+	std::cout << "---" << std::endl;
+}
+
+int main ()
+{
+	std::cout << "--- CPP status ---" << std::endl;
+	std::cout << "Compiler: " << COMPILER_NAME << " " << COMPILER_VERSION << std::endl;
+	std::cout << "Language standard: " << __cplusplus << std::endl;
+
+	<% cppStandards.each do |lang| %>
+
+		std::cout << std::endl;
+		std::cout << "--- Language: <%= lang %>" << std::endl;
+
+		<% cppAttributes.select{|a| a[:lang] == lang }.each do |attr| %>
+			TEST_ATTRIBUTE(<%= attr[:attributeToken] %>, <%= attr[:value] %>);
+		<% end %>
+
+		<% cppLanguageFeatures.select{|lf| lf[:lang] == lang}.each do |langFeature| %>
+			TEST_LANGUAGEFEATURE(<%= langFeature[:name] %>, <%= langFeature[:value] %>);
+		<% end %>
+
+		<% cppLibraryFeatures.select{|lf| lf[:lang] == lang}.each do |libFeature| %>
+			TEST_LIBFEATURE(<%= libFeature[:name] %>, <%= libFeature[:value] %>);
+		<% end %>
+
+	<% end %>
+
+	return 0;
+}
