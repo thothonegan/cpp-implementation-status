@@ -4,6 +4,9 @@
 
 #include <iostream>
 
+#include <string>
+#include <cstring>
+
 // compiler detection
 // must define:
 // COMPILER_NAME
@@ -27,6 +30,15 @@
 	#else
 		#define HAS_VERSION 0
 	#endif
+#elif defined(_MSC_VER)
+	#define COMPILER_NAME "MSVC"
+	#define COMPILER_VERSION _MSC_FULL_VER
+
+	#if __cplusplus >= 202002
+		#define HAS_VERSION 1
+	#else
+		#define HAS_VERSION 0
+	#endif
 #else
 	#define COMPILER_NAME "Unknown"
 	#define COMPILER_VERSION "Unknown"
@@ -44,10 +56,13 @@
 	#include <ciso646>
 #endif
 
-#include <cstring>
+#define VALID_ATTRIBUTE_TEST 1
 
-#ifndef __has_cpp_attribute
+#if !defined(__has_cpp_attribute) || defined(_MSC_VER)
+	// TODO: Fix MSVC which doesnt seem to allow the macro in a non-preprocessor context
 	#define __has_cpp_attribute(attributeToken) 0
+	#undef VALID_ATTRIBUTE_TEST
+	#define VALID_ATTRIBUTE_TEST 0
 #endif
 
 #define TEST_ATTRIBUTE(name, expectedValue) \
@@ -55,7 +70,7 @@ do { \
 	if (__has_cpp_attribute(name) == expectedValue) { \
 		available("* C++ Attribute " #name); \
 	} else { \
-		notAvailable("* C++ Attribute " #name); \
+		notAvailableAttribute("* C++ Attribute " #name); \
 	} \
 } while (false)
 
@@ -106,7 +121,7 @@ void available (const char* description)
 {
 	std::cout << description << ":";
 	
-	for (int i = strlen(description)+1; i < COL_WIDTH; ++i)
+	for (std::size_t i = strlen(description)+1; i < COL_WIDTH; ++i)
 		std::cout << " ";
 
 	std::cout << "available" << std::endl;
@@ -116,10 +131,24 @@ void notAvailable (const char* description)
 {
 	std::cout << description << ":";
 	
-	for (int i = strlen(description)+1; i < COL_WIDTH; ++i)
+	for (std::size_t i = strlen(description)+1; i < COL_WIDTH; ++i)
 		std::cout << " ";
 
 	std::cout << "---" << std::endl;
+}
+
+void notAvailableAttribute(const char* description)
+{
+#if VALID_ATTRIBUTE_TEST
+	notAvailable(description);
+#else
+	std::cout << description << ":";
+	
+	for (std::size_t i = strlen(description)+1; i < COL_WIDTH; ++i)
+		std::cout << " ";
+
+	std::cout << "[unable to test]" << std::endl;
+#endif
 }
 
 int main ()
